@@ -1,0 +1,307 @@
+#!/usr/bin/ruby
+
+require "rfuse"
+require "rest-client"
+require "nokogiri"
+require "pathname"
+require "byebug"
+
+module FAHelpers
+  def fa_is_unauthorized?(document)
+    document.text.include?("content available to registered users only")
+  end
+
+  def fa_is_error?(document)
+    document.css("title").text =~ /system error/i
+  end
+
+  def fa_is_invalid?(document)
+    fa_is_unauthorized?(document) || fa_is_error?(document)
+  end
+
+  def fa_is_valid?(document)
+    !fa_is_invalid?(document)
+  end
+end
+
+class Root
+  attr_accessor :path
+
+  def self.match?(path)
+    path.match(/^\/$/)
+  end
+
+  def initialize(path)
+    @path = path
+  end
+
+  def valid?
+    true
+  end
+
+  def stat
+    RFuse::Stat.directory(0111, {
+      :uid => 0,
+      :gid => 0,
+      :atime => Time.now,
+      :mtime => Time.now,
+      :size => 0
+    })
+  end
+
+  def content
+    raise Errno::EACCES.new(path)
+  end
+end
+
+class User
+  include FAHelpers
+  
+  attr_accessor :path, :slug
+
+  def self.match?(path)
+    path.match(/^\/([^\.][^\/]+)$/)
+  end
+
+  def initialize(path)
+    @path = path
+    @slug = User.match?(path)[1]
+    @resource = RestClient::Resource.new("http://www.furaffinity.net/user/")
+  end
+
+  def valid?
+    !!slug && slug[0] != "." && exists?
+  end
+
+  def exists?
+    fa_is_valid?(document)
+  end
+
+  def stat
+    return RFuse::Stat.directory(0755, {
+      :uid => 0,
+      :gid => 0,
+      :atime => Time.now,
+      :mtime => Time.now,
+      :size => 0
+    })
+  end
+
+  def content
+    [ "gallery" ]
+  end
+
+  protected
+
+  def document
+    @document ||= Nokogiri::HTML(@resource[slug].get.body)
+  end
+end
+
+class Gallery
+  include FAHelpers
+  
+  attr_accessor :path, :slug
+
+  def self.match?(path)
+    path.match(/^\/([^\.][^\/]+)\/gallery$/)
+  end
+
+  def initialize(path)
+    @path = path
+    @slug = Gallery.match?(path)[1]
+    @resource = RestClient::Resource.new("http://www.furaffinity.net/gallery/")
+  end
+
+  def valid?
+    !!slug && slug[0] != "."
+  end
+  
+  def stat
+    return RFuse::Stat.directory(0755, {
+      :uid => 0,
+      :gid => 0,
+      :atime => Time.now,
+      :mtime => Time.now,
+      :size => 0
+    })
+  end
+
+  def exists?
+    fa_is_valid?(document)
+  end
+  
+  def content
+    [].tap do |content|
+      loop.with_index do |_, page|
+        @gallery = Nokogiri::HTML(@resource[slug][page + 1].get.body)
+        break if @gallery.text.include?("There are no submissions to list")
+
+        pictures = @gallery.css("#gallery-gallery figcaption a").map do |link|
+          if link['href'].match(/^\/view\/.+\/$/)
+            link['href'].match(/^\/view\/(.+)\/$/)[1]
+          end
+        end.compact
+
+        content.concat pictures
+      end
+    end
+  end
+
+  protected
+
+  def document
+    @document ||= Nokogiri::HTML(@resource[slug].get.body)
+  end
+end
+
+class Picture
+  include FAHelpers
+  
+  attr_accessor :path, :id
+
+  def self.match?(path)
+    path.match(/^\/[^\.][^\/]+\/gallery\/([^\.][^\/]+)$/)
+  end
+
+  def initialize(path)
+    @id = Picture.match?(path)[1]
+    @path = path
+    @resource = RestClient::Resource.new("http://www.furaffinity.net/view/")
+  end
+
+  def valid?
+    !!id
+  end
+  
+  def stat
+    return RFuse::Stat.directory(0755, {
+      :uid => 0,
+      :gid => 0,
+      :atime => Time.now,
+      :mtime => Time.now,
+      :size => 0
+    })
+  end
+
+  def exists?
+    fa_is_valid?(document)
+  rescue RestClient::NotFound
+    false
+  end
+  
+  def content
+    if exists?
+      []
+    else
+      raise Errno::ENOENT.new(path)
+    end
+  end
+
+  protected
+
+  def document
+    @document ||= Nokogiri::HTML(@resource[id].get.body)
+  end
+end
+
+class FAFuse
+
+  def initialize
+  end
+
+  # The new readdir way, c+p-ed from getdir
+  def readdir(ctx, path, filler, offset, ffi)
+    [
+      Root,
+      User,
+      Gallery,
+      Picture
+    ].each do |resource|
+      if resource.match?(path)
+        object = resource.new(path)
+        if object.valid?
+          object.content.each do |subdirectory|
+            filler.push(subdirectory, getattr(nil, Pathname.new(path).join(subdirectory).to_s), 0)
+          end
+          return
+        else
+          raise Errno::ENOENT.new(path)
+        end
+      end
+    end
+  end
+
+  def getattr(ctx, path)
+    [
+      Root,
+      User,
+      Gallery,
+      Picture
+    ].each do |resource|
+      if resource.match?(path)
+        object = resource.new(path)
+        if object.valid?
+          return object.stat
+        else
+          raise Errno::ENOENT.new(path)
+        end
+      end
+    end
+    raise Errno::ENOENT.new(path)
+  end
+
+  def open(ctx,path,ffi)
+    puts "OPEN", path
+  end
+
+  def read(ctx,path,size,offset,fi)
+    puts "READ", path
+    d = @root.search(path)
+    if (d.isdir)
+      raise Errno::EISDIR.new(path)
+      return nil
+    else
+      return d.content[offset..offset + size - 1]
+    end
+  end
+
+  # Some random numbers to show with df command
+  def statfs(ctx, path)
+    s = RFuse::StatVfs.new()
+    s.f_bsize    = 1024
+    s.f_frsize   = 1024
+    s.f_blocks   = 1000000
+    s.f_bfree    = 500000
+    s.f_bavail   = 990000
+    s.f_files    = 10000
+    s.f_ffree    = 9900
+    s.f_favail   = 9900
+    s.f_fsid     = 23423
+    s.f_flag     = 0
+    s.f_namemax  = 10000
+    return s
+  end
+
+  def ioctl(ctx, path, cmd, arg, ffi, flags, data)
+    # FT: I was not been able to test it.
+    print "*** IOCTL: command: ", cmd, "\n"
+  end
+
+  def poll(ctx, path, ffi, ph, reventsp)
+    print "*** POLL: ", path, "\n"
+    # This is how we notify the caller if something happens:
+    ph.notifyPoll();
+    # when the GC harvests the object it calls fuse_pollhandle_destroy
+    # by itself.
+  end
+
+  def init(ctx,rfuseconninfo)
+    print "RFuse TestFS started\n"
+    print "init called\n"
+    print "proto_major:#{rfuseconninfo.proto_major}\n"
+  end
+
+end
+
+RFuse.main(ARGV) { fs = FAFuse.new() }
