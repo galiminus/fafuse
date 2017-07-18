@@ -20,7 +20,7 @@ module FAFuse
     end
   
     def stat
-      return RFuse::Stat.directory(0755, {
+      return RFuse::Stat.directory(0555, {
                                      :uid => 0,
                                      :gid => 0,
                                      :atime => Time.now,

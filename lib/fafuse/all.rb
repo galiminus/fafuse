@@ -1,4 +1,5 @@
 require "fafuse/root"
 require "fafuse/user"
+require "fafuse/user_metadata"
 require "fafuse/gallery"
 require "fafuse/picture"

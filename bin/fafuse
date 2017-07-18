@@ -9,11 +9,15 @@ require "byebug"
 require "fafuse/all"
 
 class FAFuse::Fuse
-  RESOURCES = [
+  DIR_RESOURCES = [
     FAFuse::Root,
     FAFuse::User,
     FAFuse::Gallery,
     FAFuse::Picture
+  ]
+
+  FILE_RESOURCES = [
+    FAFuse::UserMetadata
   ]
 
   def initialize
@@ -21,7 +25,7 @@ class FAFuse::Fuse
 
   # The new readdir way, c+p-ed from getdir
   def readdir(ctx, path, filler, offset, ffi)
-    RESOURCES.each do |resource|
+    DIR_RESOURCES.each do |resource|
       if resource.match?(path)
         object = resource.new(path)
         if object.valid?
@@ -37,7 +41,7 @@ class FAFuse::Fuse
   end
 
   def getattr(ctx, path)
-    RESOURCES.each do |resource|
+    (DIR_RESOURCES + FILE_RESOURCES).each do |resource|
       if resource.match?(path)
         object = resource.new(path)
         if object.valid?
@@ -51,17 +55,23 @@ class FAFuse::Fuse
   end
 
   def open(ctx, path, ffi)
-    puts "OPEN", path
   end
 
-  def read(ctx,path,size,offset,fi)
-    puts "READ", path
-    d = @root.search(path)
-    if (d.isdir)
+  def read(ctx, path, size, offset, fi)
+    if DIR_RESOURCES.any? { |resource| resource.match?(path) }
       raise Errno::EISDIR.new(path)
-      return nil
     else
-      return d.content[offset..offset + size - 1]
+      FILE_RESOURCES.each do |resource|
+        if resource.match?(path)
+          object = resource.new(path)
+          if object.valid?
+            return object.content[offset..offset + size - 1]
+          else
+            raise Errno::ENOENT.new(path)
+          end
+        end
+      end
+      raise Errno::ENOENT.new(path)
     end
   end
 
