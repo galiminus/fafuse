@@ -1,3 +1,11 @@
+PATH
+  remote: .
+  specs:
+    fafuse (0.0.1)
+      nokogiri (>= 1.7.2)
+      rest-client (>= 1.9.0)
+      rfuse (>= 1.1.2)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -27,9 +35,7 @@ PLATFORMS
 
 DEPENDENCIES
   byebug
-  nokogiri
-  rest-client
-  rfuse
+  fafuse!
 
 BUNDLED WITH
    1.13.6
