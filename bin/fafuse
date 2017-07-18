@@ -17,7 +17,9 @@ class FAFuse::Fuse
   ]
 
   FILE_RESOURCES = [
-    FAFuse::UserMetadata
+    FAFuse::UserMetadata,
+    FAFuse::PictureMetadata,
+    FAFuse::PictureFile
   ]
 
   def initialize

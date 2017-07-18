@@ -12,7 +12,7 @@ module FAFuse
     def initialize(path)
       @id = Picture.match?(path)[1]
       @path = path
-      @resource = RestClient::Resource.new("http://www.furaffinity.net/view/")
+      @resource = RestClient::Resource.new("http://www.furaffinity.net/full/")
     end
 
     def valid?
@@ -20,13 +20,13 @@ module FAFuse
     end
   
     def stat
-      return RFuse::Stat.directory(0755, {
-                                     :uid => 0,
-                                     :gid => 0,
-                                     :atime => Time.now,
-                                     :mtime => Time.now,
-                                     :size => 0
-                                   })
+      RFuse::Stat.directory(0555, {
+                              :uid => 0,
+                              :gid => 0,
+                              :atime => Time.now,
+                              :mtime => Time.now,
+                              :size => 0
+                            })
     end
 
     def exists?
@@ -37,7 +37,7 @@ module FAFuse
   
     def content
       if exists?
-        []
+        [ "metadata.json", "file#{format}" ]
       else
         raise Errno::ENOENT.new(path)
       end
@@ -45,6 +45,10 @@ module FAFuse
 
     protected
 
+    def format
+      Pathname.new(document.css("#submissionImg").first["src"]).extname
+    end
+    
     def document
       @document ||= Nokogiri::HTML(@resource[id].get.body)
     end
