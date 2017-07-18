@@ -16,6 +16,7 @@ Gem::Specification.new do |gem|
   gem.files         = `git ls-files -z`.split("\x0")
   gem.executables   = %w(fafuse)
   gem.require_paths = ["lib"]
+  gem.bindir        = 'bin'
 
   gem.licenses      = ["MIT"]
 
